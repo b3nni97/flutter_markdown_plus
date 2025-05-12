@@ -10,6 +10,38 @@ import '_functions_io.dart' if (dart.library.js_interop) '_functions_web.dart';
 import 'style_sheet.dart';
 import 'widget.dart';
 
+/// Supply this if you want a custom TextSpan subclass.
+typedef TextSpanFactory = TextSpan Function(
+  String text, {
+  TextStyle? style,
+  GestureRecognizer? recognizer,
+  String? semanticsLabel,
+});
+
+/// The default TextSpanFactory
+TextSpan defaultSpanFactory(
+  String text, {
+  TextStyle? style,
+  GestureRecognizer? recognizer,
+  String? semanticsLabel,
+}) =>
+    TextSpan(
+      text: text,
+      style: style,
+      recognizer: recognizer,
+      semanticsLabel: semanticsLabel,
+    );
+
+/// Function that receives the effective TextStyle and returns the StrutStyle
+/// to apply to every text widget produced by the Markdown builder.
+///
+/// • If null, no explicit StrutStyle is set and Flutter’s default line-height
+///   behaviour is used.
+/// • Useful for computing strut values dynamically from the current font
+///   size (e.g. to keep emoji, icons, or mixed scripts vertically aligned).
+///
+typedef StrutStyleFactory = StrutStyle Function(TextStyle? style);
+
 final List<String> _kBlockTags = <String>[
   'p',
   'h1',
@@ -115,6 +147,8 @@ class MarkdownBuilder implements md.NodeVisitor {
     this.onSelectionChanged,
     this.onTapText,
     this.softLineBreak = false,
+    this.spanFactory = defaultSpanFactory,
+    this.strutStyleFactory,
   });
 
   /// A delegate that controls how link and `pre` elements behave.
@@ -168,6 +202,19 @@ class MarkdownBuilder implements md.NodeVisitor {
   /// Default these spaces are removed in accordance with the Markdown
   /// specification on soft line breaks when lines of text are joined.
   final bool softLineBreak;
+
+  /// Factory that returns the concrete **TextSpan** (or subclass)
+  /// to be used for every leaf piece of Markdown text.
+  ///
+  /// – Defaults to a no-frills implementation that just creates a plain
+  ///   `TextSpan`, so existing behaviour is preserved.
+  /// – Pass your own factory to inject a custom `TextSpan` subclass –
+  ///   e.g. for syntax highlighting, inline icons, etc.
+  final TextSpanFactory spanFactory;
+
+  /// Optional factory that generates a StrutStyle for every rendered text
+  /// widget, based on the effective TextStyle passed in.
+  final StrutStyleFactory? strutStyleFactory;
 
   final List<String> _listIndents = <String>[];
   final List<_BlockElement> _blocks = <_BlockElement>[];
@@ -236,7 +283,8 @@ class MarkdownBuilder implements md.NodeVisitor {
         _tables.add(_TableElement());
       } else if (tag == 'tr') {
         final int length = _tables.single.rows.length;
-        BoxDecoration? decoration = styleSheet.tableCellsDecoration as BoxDecoration?;
+        BoxDecoration? decoration =
+            styleSheet.tableCellsDecoration as BoxDecoration?;
         if (length == 0 || length.isOdd) {
           decoration = null;
         }
@@ -274,7 +322,9 @@ class MarkdownBuilder implements md.NodeVisitor {
       // The Markdown parser passes empty table data tags for blank
       // table cells. Insert a text node with an empty string in this
       // case for the table cell to get properly created.
-      if (element.tag == 'td' && element.children != null && element.children!.isEmpty) {
+      if (element.tag == 'td' &&
+          element.children != null &&
+          element.children!.isEmpty) {
         element.children!.add(md.Text(''));
       }
 
@@ -291,8 +341,13 @@ class MarkdownBuilder implements md.NodeVisitor {
   /// Returns the text, if any, from [element] and its descendants.
   String? extractTextFromElement(md.Node element) {
     return element is md.Element && (element.children?.isNotEmpty ?? false)
-        ? element.children!.map((md.Node e) => e is md.Text ? e.text : extractTextFromElement(e)).join()
-        : (element is md.Element && (element.attributes.isNotEmpty) ? element.attributes['alt'] : '');
+        ? element.children!
+            .map((md.Node e) =>
+                e is md.Text ? e.text : extractTextFromElement(e))
+            .join()
+        : (element is md.Element && (element.attributes.isNotEmpty)
+            ? element.attributes['alt']
+            : '');
   }
 
   @override
@@ -322,7 +377,8 @@ class MarkdownBuilder implements md.NodeVisitor {
       // Leading spaces in paragraph or list item are ignored
       // https://github.github.com/gfm/#example-192
       // https://github.github.com/gfm/#example-236
-      if (const <String>['ul', 'ol', 'li', 'p', 'br'].contains(_lastVisitedTag)) {
+      if (const <String>['ul', 'ol', 'li', 'p', 'br']
+          .contains(_lastVisitedTag)) {
         text = text.replaceAll(leadingSpacesPattern, '');
       }
 
@@ -334,10 +390,12 @@ class MarkdownBuilder implements md.NodeVisitor {
 
     Widget? child;
     if (_blocks.isNotEmpty && builders.containsKey(_blocks.last.tag)) {
-      child = builders[_blocks.last.tag!]!.visitText(text, styleSheet.styles[_blocks.last.tag!]);
+      child = builders[_blocks.last.tag!]!
+          .visitText(text, styleSheet.styles[_blocks.last.tag!]);
     } else if (_blocks.last.tag == 'pre') {
       child = _ScrollControllerBuilder(
-          builder: (BuildContext context, ScrollController preScrollController, Widget? child) {
+          builder: (BuildContext context, ScrollController preScrollController,
+              Widget? child) {
             return Scrollbar(
               controller: preScrollController,
               child: SingleChildScrollView(
@@ -350,12 +408,13 @@ class MarkdownBuilder implements md.NodeVisitor {
           },
           child: _buildRichText(delegate.formatText(styleSheet, text.text)));
     } else {
+      final TextSpan span = spanFactory(
+        trimText(text.text),
+        style: _isInBlockquote ? styleSheet.blockquote : _inlines.last.style,
+        recognizer: _linkHandlers.isNotEmpty ? _linkHandlers.last : null,
+      );
       child = _buildRichText(
-        TextSpan(
-          style: _isInBlockquote ? styleSheet.blockquote : _inlines.last.style,
-          text: trimText(text.text),
-          recognizer: _linkHandlers.isNotEmpty ? _linkHandlers.last : null,
-        ),
+        span,
         textAlign: _textAlignForBlockTag(_currentBlockTag),
       );
     }
@@ -379,7 +438,9 @@ class MarkdownBuilder implements md.NodeVisitor {
         if (current.children.isNotEmpty) {
           return Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: fitContent ? CrossAxisAlignment.start : CrossAxisAlignment.stretch,
+            crossAxisAlignment: fitContent
+                ? CrossAxisAlignment.start
+                : CrossAxisAlignment.stretch,
             children: current.children,
           );
         } else {
@@ -413,15 +474,19 @@ class MarkdownBuilder implements md.NodeVisitor {
           }
           child = Row(
             mainAxisSize: fitContent ? MainAxisSize.min : MainAxisSize.max,
-            textBaseline:
-                listItemCrossAxisAlignment == MarkdownListItemCrossAxisAlignment.start ? null : TextBaseline.alphabetic,
-            crossAxisAlignment: listItemCrossAxisAlignment == MarkdownListItemCrossAxisAlignment.start
+            textBaseline: listItemCrossAxisAlignment ==
+                    MarkdownListItemCrossAxisAlignment.start
+                ? null
+                : TextBaseline.alphabetic,
+            crossAxisAlignment: listItemCrossAxisAlignment ==
+                    MarkdownListItemCrossAxisAlignment.start
                 ? CrossAxisAlignment.start
                 : CrossAxisAlignment.baseline,
             children: <Widget>[
               SizedBox(
-                width:
-                    styleSheet.listIndent! + styleSheet.listBulletPadding!.left + styleSheet.listBulletPadding!.right,
+                width: styleSheet.listIndent! +
+                    styleSheet.listBulletPadding!.left +
+                    styleSheet.listBulletPadding!.right,
                 child: bullet,
               ),
               Flexible(
@@ -432,9 +497,11 @@ class MarkdownBuilder implements md.NodeVisitor {
           );
         }
       } else if (tag == 'table') {
-        if (styleSheet.tableColumnWidth is FixedColumnWidth || styleSheet.tableColumnWidth is IntrinsicColumnWidth) {
+        if (styleSheet.tableColumnWidth is FixedColumnWidth ||
+            styleSheet.tableColumnWidth is IntrinsicColumnWidth) {
           child = _ScrollControllerBuilder(
-            builder: (BuildContext context, ScrollController tableScrollController, Widget? child) {
+            builder: (BuildContext context,
+                ScrollController tableScrollController, Widget? child) {
               return Scrollbar(
                 controller: tableScrollController,
                 thumbVisibility: styleSheet.tableScrollbarThumbVisibility,
@@ -605,7 +672,8 @@ class MarkdownBuilder implements md.NodeVisitor {
     }
 
     if (_linkHandlers.isNotEmpty) {
-      final TapGestureRecognizer recognizer = _linkHandlers.last as TapGestureRecognizer;
+      final TapGestureRecognizer recognizer =
+          _linkHandlers.last as TapGestureRecognizer;
       return GestureDetector(onTap: recognizer.onTap, child: child);
     } else {
       return child;
@@ -636,7 +704,9 @@ class MarkdownBuilder implements md.NodeVisitor {
         child: bulletBuilder!(
           MarkdownBulletParameters(
             index: index,
-            style: isUnordered ? BulletStyle.unorderedList : BulletStyle.orderedList,
+            style: isUnordered
+                ? BulletStyle.unorderedList
+                : BulletStyle.orderedList,
             nestLevel: _listIndents.length - 1,
           ),
         ),
@@ -752,28 +822,50 @@ class MarkdownBuilder implements md.NodeVisitor {
     }
   }
 
-  /// Extracts all spans from an inline element and merges them into a single list
+  /// Flattens an InlineSpan tree into a single-level list, making sure that
+  /// inherited styles are merged and custom spans created via [spanFactory]
+  /// are preserved.
+  ///
+  /// This is needed for cases like `CustomTextSpan`, where the incoming
+  /// `TextSpan` may itself contain nested children (e.g. for emoji handling).
   Iterable<InlineSpan> _getInlineSpansFromSpan(InlineSpan span) {
-    // If the span is not a TextSpan or it has no children, return the span
-    if (span is! TextSpan || span.children == null) {
+    // Non-TextSpan nodes (e.g. WidgetSpan) are returned untouched.
+    if (span is! TextSpan) return <InlineSpan>[span];
+
+    // Leaf: no children → return the span as-is.
+    if (span.children == null || span.children!.isEmpty)
       return <InlineSpan>[span];
-    }
 
-    // Merge the style of the parent with the style of the children
-    final Iterable<InlineSpan> spans = span.children!.map((InlineSpan childSpan) {
-      if (childSpan is TextSpan) {
-        return TextSpan(
-          text: childSpan.text,
-          recognizer: childSpan.recognizer,
-          semanticsLabel: childSpan.semanticsLabel,
-          style: childSpan.style?.merge(span.style),
-        );
+    final List<InlineSpan> flat = <InlineSpan>[];
+
+    for (final InlineSpan child in span.children!) {
+      if (child is TextSpan) {
+        // Merge parent style into the child.
+        final TextStyle? mergedStyle = child.style?.merge(span.style);
+
+        // Recurse if the child itself has children.
+        if (child.children != null && child.children!.isNotEmpty) {
+          flat.addAll(_getInlineSpansFromSpan(TextSpan(
+            text: child.text,
+            children: child.children,
+            recognizer: child.recognizer,
+            semanticsLabel: child.semanticsLabel,
+            style: mergedStyle,
+          )));
+        } else {
+          // Leaf text → create via factory so CustomTextSpan can be injected.
+          flat.add(TextSpan(
+            text: child.text,
+            style: mergedStyle,
+            recognizer: child.recognizer,
+          ));
+        }
       } else {
-        return childSpan;
+        // Pass through any non-TextSpan child unchanged.
+        flat.add(child);
       }
-    });
-
-    return spans;
+    }
+    return flat;
   }
 
   // Accesses the TextSpan property correctly depending on the widget type.
@@ -814,7 +906,8 @@ class MarkdownBuilder implements md.NodeVisitor {
 
       if (lastIsText) {
         // Removes last widget from the list for merging and extracts its spans
-        spans.addAll(_getInlineSpansFromSpan(_getInlineSpanFromText(mergedWidgets.removeLast())!));
+        spans.addAll(_getInlineSpansFromSpan(
+            _getInlineSpanFromText(mergedWidgets.removeLast())!));
       }
 
       spans.addAll(_getInlineSpansFromSpan(currentSpan));
@@ -827,7 +920,9 @@ class MarkdownBuilder implements md.NodeVisitor {
         mergedWidget = child;
       } else {
         final InlineSpan first = spans.first;
-        final TextSpan textSpan = (spans.length == 1 && first is TextSpan) ? first : TextSpan(children: spans);
+        final TextSpan textSpan = (spans.length == 1 && first is TextSpan)
+            ? first
+            : TextSpan(children: spans);
         mergedWidget = _buildRichText(textSpan, textAlign: textAlign);
       }
 
@@ -917,7 +1012,8 @@ class MarkdownBuilder implements md.NodeVisitor {
     final List<InlineSpan> mergedSpans = <InlineSpan>[];
 
     for (int index = 1; index < textSpans.length; index++) {
-      final InlineSpan previous = mergedSpans.isEmpty ? textSpans.first : mergedSpans.removeLast();
+      final InlineSpan previous =
+          mergedSpans.isEmpty ? textSpans.first : mergedSpans.removeLast();
       final InlineSpan nextChild = textSpans[index];
 
       final bool previousIsTextSpan = previous is TextSpan;
@@ -954,23 +1050,30 @@ class MarkdownBuilder implements md.NodeVisitor {
     if (selectable) {
       return SelectableText.rich(
         text,
-        textScaler: styleSheet.textScaler,
+        key: k,
         textAlign: textAlign ?? TextAlign.start,
+        textScaler: styleSheet.textScaler,
+        style: text.style,
+        strutStyle: strutStyleFactory?.call(text.style),
         onSelectionChanged: onSelectionChanged != null
             ? (TextSelection selection, SelectionChangedCause? cause) =>
                 onSelectionChanged!(text.text, selection, cause)
             : null,
         onTap: onTapText,
-        key: k,
-      );
-    } else {
-      return Text.rich(
-        text,
-        textScaler: styleSheet.textScaler,
-        textAlign: textAlign ?? TextAlign.start,
-        key: k,
       );
     }
+
+    // Add a `SizedBox` around the `Text.rich` otherwise aligment of emojies is buggy.
+    return SizedBox(
+      key: k,
+      child: Text.rich(
+        text,
+        textAlign: textAlign ?? TextAlign.start,
+        textScaler: styleSheet.textScaler,
+        style: text.style,
+        strutStyle: strutStyleFactory?.call(text.style),
+      ),
+    );
   }
 }
 
@@ -985,7 +1088,8 @@ class _ScrollControllerBuilder extends StatefulWidget {
   final Widget? child;
 
   @override
-  State<_ScrollControllerBuilder> createState() => _ScrollControllerBuilderState();
+  State<_ScrollControllerBuilder> createState() =>
+      _ScrollControllerBuilderState();
 }
 
 class _ScrollControllerBuilderState extends State<_ScrollControllerBuilder> {

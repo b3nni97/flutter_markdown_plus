@@ -29,12 +29,14 @@ typedef MarkdownOnSelectionChangedCallback = void Function(
 /// Markdown link tag in the document.
 ///
 /// Used by [MarkdownWidget.onTapLink].
-typedef MarkdownTapLinkCallback = void Function(String text, String? href, String title);
+typedef MarkdownTapLinkCallback = void Function(
+    String text, String? href, String title);
 
 /// Signature for custom image widget.
 ///
 /// Used by [MarkdownWidget.imageBuilder]
-typedef MarkdownImageBuilder = Widget Function(Uri uri, String? title, String? alt);
+typedef MarkdownImageBuilder = Widget Function(
+    Uri uri, String? title, String? alt);
 
 /// Signature for custom checkbox widget.
 ///
@@ -135,7 +137,8 @@ abstract class MarkdownElementBuilder {
   ///
   /// If you needn't build a widget, return null.
   @Deprecated('Use visitElementAfterWithContext() instead.')
-  Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) => null;
+  Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) =>
+      null;
 }
 
 /// Enum to specify which theme being used when creating [MarkdownStyleSheet]
@@ -223,8 +226,11 @@ abstract class MarkdownWidget extends StatefulWidget {
     this.builders = const <String, MarkdownElementBuilder>{},
     this.paddingBuilders = const <String, MarkdownPaddingBuilder>{},
     this.fitContent = false,
-    this.listItemCrossAxisAlignment = MarkdownListItemCrossAxisAlignment.baseline,
+    this.listItemCrossAxisAlignment =
+        MarkdownListItemCrossAxisAlignment.baseline,
     this.softLineBreak = false,
+    this.spanFactory,
+    this.strutStyleFactory,
   });
 
   /// The Markdown to display.
@@ -325,6 +331,19 @@ abstract class MarkdownWidget extends StatefulWidget {
   /// specification on soft line breaks when lines of text are joined.
   final bool softLineBreak;
 
+  /// Factory that decides which concrete TextSpan (or subclass) is created
+  /// for every leaf piece of Markdown text.
+  ///
+  /// • If null, the builder falls back to a plain `TextSpan`, preserving
+  ///   the original behaviour.
+  /// • Provide a custom factory to inject, for example, a `CustomTextSpan`
+  ///   that adds syntax highlighting, inline icons, etc.
+  final TextSpanFactory? spanFactory;
+
+  /// Optional factory that generates a StrutStyle for every rendered text
+  /// widget, based on the effective TextStyle passed in.
+  final StrutStyleFactory? strutStyleFactory;
+
   /// Subclasses should override this function to display the given children,
   /// which are the parsed representation of [data].
   @protected
@@ -334,7 +353,8 @@ abstract class MarkdownWidget extends StatefulWidget {
   State<MarkdownWidget> createState() => _MarkdownWidgetState();
 }
 
-class _MarkdownWidgetState extends State<MarkdownWidget> implements MarkdownBuilderDelegate {
+class _MarkdownWidgetState extends State<MarkdownWidget>
+    implements MarkdownBuilderDelegate {
   List<Widget>? _children;
   final List<GestureRecognizer> _recognizers = <GestureRecognizer>[];
 
@@ -347,7 +367,8 @@ class _MarkdownWidgetState extends State<MarkdownWidget> implements MarkdownBuil
   @override
   void didUpdateWidget(MarkdownWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.data != oldWidget.data || widget.styleSheet != oldWidget.styleSheet) {
+    if (widget.data != oldWidget.data ||
+        widget.styleSheet != oldWidget.styleSheet) {
       _parseMarkdown();
     }
   }
@@ -359,8 +380,10 @@ class _MarkdownWidgetState extends State<MarkdownWidget> implements MarkdownBuil
   }
 
   void _parseMarkdown() {
-    final MarkdownStyleSheet fallbackStyleSheet = kFallbackStyle(context, widget.styleSheetTheme);
-    final MarkdownStyleSheet styleSheet = fallbackStyleSheet.merge(widget.styleSheet);
+    final MarkdownStyleSheet fallbackStyleSheet =
+        kFallbackStyle(context, widget.styleSheetTheme);
+    final MarkdownStyleSheet styleSheet =
+        fallbackStyleSheet.merge(widget.styleSheet);
 
     _disposeRecognizers();
 
@@ -392,6 +415,8 @@ class _MarkdownWidgetState extends State<MarkdownWidget> implements MarkdownBuil
       onSelectionChanged: widget.onSelectionChanged,
       onTapText: widget.onTapText,
       softLineBreak: widget.softLineBreak,
+      spanFactory: widget.spanFactory ?? defaultSpanFactory,
+      strutStyleFactory: widget.strutStyleFactory,
     );
 
     _children = builder.build(astNodes);
@@ -401,7 +426,8 @@ class _MarkdownWidgetState extends State<MarkdownWidget> implements MarkdownBuil
     if (_recognizers.isEmpty) {
       return;
     }
-    final List<GestureRecognizer> localRecognizers = List<GestureRecognizer>.from(_recognizers);
+    final List<GestureRecognizer> localRecognizers =
+        List<GestureRecognizer>.from(_recognizers);
     _recognizers.clear();
     for (final GestureRecognizer recognizer in localRecognizers) {
       recognizer.dispose();
@@ -467,6 +493,8 @@ class MarkdownBody extends MarkdownWidget {
     this.shrinkWrap = true,
     super.fitContent = true,
     super.softLineBreak,
+    super.spanFactory,
+    super.strutStyleFactory,
   });
 
   /// If [shrinkWrap] is `true`, [MarkdownBody] will take the minimum height
@@ -481,7 +509,8 @@ class MarkdownBody extends MarkdownWidget {
     }
     return Column(
       mainAxisSize: shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
-      crossAxisAlignment: fitContent ? CrossAxisAlignment.start : CrossAxisAlignment.stretch,
+      crossAxisAlignment:
+          fitContent ? CrossAxisAlignment.start : CrossAxisAlignment.stretch,
       children: children,
     );
   }
@@ -523,6 +552,8 @@ class Markdown extends MarkdownWidget {
     this.physics,
     this.shrinkWrap = false,
     super.softLineBreak,
+    super.spanFactory,
+    super.strutStyleFactory,
   });
 
   /// The amount of space by which to inset the children.
@@ -559,10 +590,12 @@ class Markdown extends MarkdownWidget {
 /// Parse [task list items](https://github.github.com/gfm/#task-list-items-extension-).
 ///
 /// This class is no longer used as Markdown now supports checkbox syntax natively.
-@Deprecated('Use [OrderedListWithCheckBoxSyntax] or [UnorderedListWithCheckBoxSyntax]')
+@Deprecated(
+    'Use [OrderedListWithCheckBoxSyntax] or [UnorderedListWithCheckBoxSyntax]')
 class TaskListSyntax extends md.InlineSyntax {
   /// Creates a new instance.
-  @Deprecated('Use [OrderedListWithCheckBoxSyntax] or [UnorderedListWithCheckBoxSyntax]')
+  @Deprecated(
+      'Use [OrderedListWithCheckBoxSyntax] or [UnorderedListWithCheckBoxSyntax]')
   TaskListSyntax() : super(_pattern);
 
   static const String _pattern = r'^ *\[([ xX])\] +';
